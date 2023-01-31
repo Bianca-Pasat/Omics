@@ -1,0 +1,404 @@
+---
+title: "aitor.dataset"
+output: pdf_document
+---
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+
+# Load the necesary libraries and annotation files
+## Human Gene 2.0 ST Array
+
+```{r}
+
+
+source("https://bioconductor.org/biocLite.R")
+biocLite("hugene20sttranscriptcluster.db")
+
+biocLite("pd.hugene.2.0.st")
+library(pd.hugene.2.0.st)
+
+library(affy)
+library(oligo)
+library(affycoretools)
+library(hugene20sttranscriptcluster.db) # logically the annotation database to query
+library(limma)
+
+library(org.Hs.eg.db)
+
+
+
+```
+
+
+# Import the raw files and perform normalization
+
+```{r}
+
+mydir <- "C:/Users/stathis/Desktop/IRE1_project_microarrays"
+
+setwd(mydir)
+
+pdat <- read.table("pdat.project.txt",header=TRUE,stringsAsFactors = FALSE)
+
+library(RColorBrewer)
+cols = brewer.pal(6, "Set1")
+
+
+celfiles = list.files(path = ".", pattern = ".CEL$", all.files = FALSE,
+full.names = FALSE, recursive = FALSE, ignore.case = FALSE)
+
+# want also for the phenotype information to have the same celfile names as also sample names in the pData
+## also pay attention to the .CEL extension to be included
+
+# renames similarly the celfiles
+
+file.rename(celfiles, rownames(pdat))
+
+celfiles.updated = list.files(path = ".", pattern = ".CEL$", all.files = FALSE,
+full.names = FALSE, recursive = FALSE, ignore.case = FALSE)
+
+
+affyRaw <- read.celfiles(celfiles.updated, phenoData = pdat) # has also arguments for phenotype information, pdata argument
+# add later after importing the celfiles
+
+affyRaw <- read.celfiles(celfiles.updated)
+
+identical(colnames(affyRaw),rownames(pdat))
+
+set.names <- colnames(affyRaw)
+pdat.names <- rownames(pdat)
+
+set.names %in% pdat.names # to return TRUE ## actually identical would be more crusial
+
+pd <- AnnotatedDataFrame(data= pdat)
+phenoData(affyRaw) <- pd
+
+# normalization-remove of control probesets-change also of the annotation
+
+celfiles.rma <- rma(affyRaw, target="core") # important for Gene ST arrays-The Gene ST arrays are intended to measure transcript abundances, and the ability to summarize at the probeset level is really just due to the fact that they are based on the Exon ST platform.
+
+eset.rma <- getMainProbes(celfiles.rma) # remove control probesets
+
+
+par(mfrow=c(1,2))
+boxplot(affyRaw, col = cols, target="core",las = 2, main = "Pre-Normalization");
+boxplot(celfiles.rma, col = cols, las = 2, main = "Post-Normalization")
+
+par(mfrow=c(1,1))
+
+annotation(eset.rma) <- "hugene20sttranscriptcluster.db" # check if necessary
+
+# optional for alternative ways
+
+eset.rma <- annotateEset(eset.rma, hugene20sttranscriptcluster.db)
+
+
+-----------------------######-------------------------------
+#Second way of preprocessing
+
+dat <- read.celfiles(list.celfiles())
+z <- pData(dat)
+otherdat <- data.frame(Condition = rep(c("DMSO_Normoxia_4h","MKC8866_Normoxia_24h"), each = 3), Batch = rep(c(1,2,3), each = 1, times = 2))
+z <- data.frame(z, otherdat)
+pData(dat) <- z
+validObject(dat)
+
+celfiles.rma <- rma(dat, target="core")
+eset.rma <- getMainProbes(celfiles.rma)
+
+par(mfrow=c(1,2))
+boxplot(dat, col = cols, target="core",las = 2, main = "Pre-Normalization");
+boxplot(celfiles.rma, col = cols, las = 2, main = "Post-Normalization")
+
+
+eset.rma <- annotateEset(eset.rma, hugene20sttranscriptcluster.db)
+
+
+```
+
+# perform some initial EDA plots
+
+
+```{r}
+
+boxplot(exprs(eset.rma))
+plotDensity(exprs(eset.rma))
+hist(exprs(eset.rma))
+plotMDS(exprs(eset.rma),colour=as.factor(eset.rma$Batch))
+
+```
+
+
+# Non-specific Intensity filtering
+
+```{r}
+
+
+#Then move to non-specific intensity filtering
+
+NotExpressed <- apply( exprs(eset.rma), MARGIN=2, function( z ){
+  dens <- density( z )
+  expr.cut <- dens$x[ which.max( dens$y )]
+	return( z < expr.cut )
+} )
+
+# 1way-more naive---just remove than >50% generally
+
+expr.ps <- rowSums( !NotExpressed ) > ( ncol( NotExpressed )/2 )
+eset.2 <- eset.rma[expr.ps,]
+
+# More specific--remove with more than 50% in each condition
+# In detail, remove probe sets that are below the specific threshold we have defined above--- in e.g. 50% of control samples or probe sets that are below the threshold in 50% of cancer samples
+
+Index_DMSO <- pData(eset.rma)$Condition=="DMSO_Normoxia_4h"
+Index_MKC8866 <- pData(eset.rma)$Condition=="MKC8866_Normoxia_24h"
+
+
+BelowCut_MKC8866 <- NotExpressed[, Index_MKC8866]
+BelowCut_DMSO <- NotExpressed[, Index_DMSO]
+
+filtered_DMSO <- rowSums(BelowCut_DMSO) > (ncol(BelowCut_DMSO) * 0.5)
+filtered_MKC8866 <- rowSums(BelowCut_MKC8866) > (ncol(BelowCut_MKC8866) * 0.5)
+
+eset.filtered <- eset.rma[!(filtered_MKC8866 & filtered_DMSO), ]
+dim(eset.filtered)
+
+
+# some final EDA plots prior statistical testing
+
+library(rafalib) # load Rafael Irizzary's cran package for modified plots
+plotDensity(exprs(eset.filtered))
+qqnorm(exprs(eset.filtered))
+qqline(exprs(eset.filtered),col="red")
+
+plotMDS(exprs(eset.filtered), label=eset.filtered$Condition, col=as.numeric(as.factor(eset.filtered$Batch)))
+
+# utilize myplclust() function for plotting hclust objects in colour
+d <- dist(t(exprs(eset.filtered)))
+hc <- hclust(d, method="average") # average
+myplclust(hc,lab.col=as.numeric(eset.filtered$Condition))
+myplclust(hc,labels=eset.filtered$Condition,lab.col=as.numeric(eset.filtered$Batch))
+
+# also a final pca plot with ggplot2
+
+# PCA plot
+library(ggplot2)
+mat <- exprs(eset.filtered)
+pca <- prcomp(t(mat), scale=TRUE) # check about scaling
+summary(pca)
+eig <- (pca$sdev)^2
+variance <- eig*100/sum(eig)
+dat <-as.data.frame(eset.filtered)
+dat$sampleName <- colnames(eset.filtered)
+
+ggplot(dat, aes(pca$x[,1], pca$x[,2], color=as.factor(Batch), shape=Condition)) + geom_point(size=3) + geom_text(aes(label=sampleName)) + xlab(paste0("PC1: ",round(variance[1],2),"% variance")) + ylab(paste0("PC2: ",round(variance[2],2),"% variance"))
+
+
+
+```
+
+# Differential gene expression
+
+
+```{r}
+
+con <- as.factor(eset.filtered$Condition) # check levels
+batch <- as.factor(eset.filtered$Batch)
+design <- model.matrix(~con + batch)
+fit <- lmFit(eset.filtered,design)
+fit2 <- eBayes(fit,robust=TRUE,trend=TRUE)
+top <- topTable(fit2, coef=2, number=nrow(fit2), adjust.method="fdr", sort.by="none",p.value=0.05, lfc=0.5,confint = 0.95)
+
+top.final <- top[!is.na(top$SYMBOL),]
+
+
+# other scenario to implement arrayWeights
+
+arrayw <- arrayWeights(eset.filtered, design=design)
+barplot(arrayw, xlab="Array", ylab="Weight", col="blue", las=2) 
+abline(h=1, lwd=1, lty=2, col="red")
+fit <- lmFit(eset.filtered,design,weights=arrayw)
+fit2 <- eBayes(fit,robust=TRUE,trend=TRUE)
+top <- topTable(fit2, coef=2, number=nrow(fit2), adjust.method="fdr", sort.by="none",p.value=0.05, lfc=0.5,confint = 0.95)
+
+top.final <- top[!is.na(top$SYMBOL),]
+
+```
+
+
+Implementation also with mroast function-pathview-etc
+
+```{r}
+
+ls("package:hugene20sttranscriptcluster.db")
+
+# "hugene20sttranscriptclusterPATH2PROBE"
+# "hugene20sttranscriptclusterSYMBOL"
+
+# "hugene20sttranscriptclusterPATH"
+
+# continue with eset.filtered
+
+load("human_c3_v5p2.rdata") # Hs.c3 list
+
+load("human_c2_v5p2.rdata") # for KEGG pathways
+
+kegg.only <- Hs.c2[grep("KEGG", names(Hs.c2))]
+
+
+original.index <- match(fData(eset.filtered)$PROBEID, rownames(eset.filtered))
+
+indices <- ids2indices(Hs.c3,fData(eset.filtered)$ENTREZID)
+
+indices <- lapply(indices, FUN=function(x) { original.index[x] })
+
+set.size <- sapply(indices,FUN=length)
+
+indices.2 <- indices[set.size>=10]
+
+res <- mroast(eset.filtered, indices.2, design, contrast=2,nrot=10000)
+
+# pathview implementation for visualizing specific pathways of mroast
+
+library(pathview)
+
+x <- hugene20sttranscriptclusterENTREZID
+xx <- as.list(x)
+entrezid <- sapply(rownames(fit2), function(x)xx[x],USE.NAMES = FALSE)
+
+gene.data <- fit2$coefficients[,2]
+names(gene.data) <- as.vector(entrezid)
+
+
+rownames(gene.data) <- entrezid
+
+pv.out <- pathview(gene.data=gene.data, pathway.id = "04142",limit= list(gene=max(abs(gene.data)), cpd=1),
+          species="hsa",out.suffix="trial",kegg.native = T,
+          same.layer=F)
+# check for example the ERBB_SIGNALING THAT APPEARS IN THE TOP HITS
+
+hsa04142 <- pathview(gene.data  = gene.data,pathway.id = "hsa04142", species="hsa",kegg.native=F,limit= list(gene=max(abs(gene.data)), cpd=1), sign.pos="bottomleft",keys.align = "y",out.suffix="trial.3")
+
+
+# barplot of a selected pathway, based on the results above
+
+barcodeplot( fit2$t[,2], index=indices.2[["KEGG_LYSOSOME"]] )
+
+ 
+
+```
+
+PCA diagnostic charts function 
+
+```{r}
+
+# use as input the output of prcomp function
+
+
+pcaCharts <- function(x) {
+    x.var <- x$sdev ^ 2
+    x.pvar <- x.var/sum(x.var)
+    print("proportions of variance:")
+    print(x.pvar)
+    
+    par(mfrow=c(2,2))
+    plot(x.pvar,xlab="Principal component", ylab="Proportion of variance explained", ylim=c(0,1), type='b')
+    plot(cumsum(x.pvar),xlab="Principal component", ylab="Cumulative Proportion of variance explained", ylim=c(0,1), type='b')
+    screeplot(x)
+    screeplot(x,type="l")
+    par(mfrow=c(1,1))
+}
+
+
+# also an alternative function of visualizing pca
+
+#Switching off scale factors (var.scale and scale variables)
+
+library(devtools)
+install_github("ggbiplot","vqv")
+library(ggbiplot)
+
+
+g <- ggbiplot(iris.pca,scale = 0, var.scale = 0, labels=iris.cat,groups = iris.cat,
+              ellipse = TRUE, 
+              circle = TRUE)
+g <- g + scale_color_discrete(name = '')
+g <- g + theme(legend.direction = 'horizontal', 
+               legend.position = 'top')
+print(g)
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+You can also embed plots, for example:
+
+```{r, echo=FALSE}
+plot(cars)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
