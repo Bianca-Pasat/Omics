@@ -20,7 +20,7 @@ library("stringr")
 library("reshape2")
 library("pheatmap")
 
-NOT YET INSTALLED 
+#NOT YET INSTALLED 
 library(pd.hugene.2.0.st)
 #library(affy)
 #library(oligo)

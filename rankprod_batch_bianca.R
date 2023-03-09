@@ -24,14 +24,14 @@ option_list = list(
   make_option(
     "--samples",
     action = "store",
-    default = "/home/ben/Desktop/OCT_22_DIF_OMICS/rna_bianca/test2/detest/*.txt",
+    default = "/home/ben/Desktop/pacli/tapsi_star/t8_star_tab/PD8.txt",
     type = 'character',
     help = 'Path to samples files, for multiple files add *.txt'
   ),
   make_option(
     "--samplesInfo",
     action = "store",
-    default = "/home/ben/Desktop/OCT_22_DIF_OMICS/rna_bianca/test2/detest/samples_info/*.txt",
+    default = "/home/ben/Desktop/pacli/tapsi_star/samples_info_8.csv",
     type = 'character',
     help = 'Path to samplesInfo files, for multiple files add *.txt'
   ),
@@ -101,7 +101,7 @@ option_list = list(
   make_option(
     "--outdir",
     action = "store",
-    default = "/home/ben/Desktop/OCT_22_DIF_OMICS/rna_bianca/test2/detest/",
+    default = "/home/ben/Desktop/pacli/",
     type = 'character',
     help = 'Path to output directory'
   ),
@@ -169,7 +169,7 @@ is_logged<- opt$logged
 logbase <- opt$logbase
 is_normalized <- opt$norm
 data_size=opt$wantgenes
-cl=c(0,1,1,1,0,0)
+cl=c(0,0,0,1,1,1)
 name="name"
 
 
@@ -391,6 +391,7 @@ runBatchCorrectorBianca<-function(allsamples,allsamples_info,allnames){
   }
 }
 
+comsvare<-comsva(samples, sampleInfo, opt$condition, opt$batcheffect)
 # run batch effect
 if(opt$runBatch){
   runBatchCorrectorBianca(allsamples,allsamples_info,allnames)
